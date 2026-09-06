@@ -9,6 +9,7 @@ from .nodes import (
     execute_node,
     clarify_node,
     route_after_observe,
+    route_after_think,
 )
 
 
@@ -17,10 +18,10 @@ def build_graph() -> StateGraph:
     Build the agent workflow graph.
 
     Flow:
-        START -> observe -> [plan OR clarify] -> think -> execute -> END
+        START -> observe -> [plan OR clarify] -> think -> [execute OR revise OR clarify] -> END
 
-        If clarification is needed:
-        observe -> clarify -> END (waits for user response, then starts new graph run)
+        If clarification is needed at any point:
+        -> clarify -> END (waits for user response, then starts new graph run)
     """
 
     graph = StateGraph(AgentState)
@@ -35,7 +36,7 @@ def build_graph() -> StateGraph:
     # Set entry point
     graph.set_entry_point("observe")
 
-    # Add edges
+    # After observe: plan or clarify
     graph.add_conditional_edges(
         "observe",
         route_after_observe,
@@ -45,8 +46,20 @@ def build_graph() -> StateGraph:
         },
     )
 
+    # After plan: always think
     graph.add_edge("plan", "think")
-    graph.add_edge("think", "execute")
+
+    # After think: execute, revise plan, or clarify
+    graph.add_conditional_edges(
+        "think",
+        route_after_think,
+        {
+            "execute": "execute",
+            "plan": "plan",
+            "clarify": "clarify",
+        },
+    )
+
     graph.add_edge("execute", END)
     graph.add_edge("clarify", END)
 

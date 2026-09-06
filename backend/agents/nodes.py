@@ -23,7 +23,8 @@ Your job: Understand what the user is asking and summarize it clearly.
 Given the user message and conversation history, provide:
 1. A clear summary of what the user wants
 2. What type of task this is (research, coding, analysis, creative, general)
-3. What information you already have vs what might be needed
+3. What information you already have vs what might be needed to complete the request
+
 
 Output a JSON object with this exact structure:
 {
@@ -69,8 +70,20 @@ Output a JSON object with this exact structure:
     "current_step": 0,
     "ready_to_execute": true/false,
     "needs_search": true/false,
-    "search_query": "query if search needed"
+    "search_query": "query if search needed",
+    "needs_revision": false,
+    "revision_reason": "if needs_revision is true, explain why the plan needs revision",
+    "needs_clarification": false
 }
+
+Set "needs_revision" to true if:
+- The plan is missing important steps
+- Search results revealed the approach is wrong
+- A better approach was found
+
+Set "needs_clarification" to true if:
+- You cannot proceed without user input
+- Critical information is missing that only the user can provide
 """
 
 EXECUTE_PROMPT = """You are an AI assistant's EXECUTION module.
@@ -251,6 +264,9 @@ What should we do next?
 
     needs_search = False
     search_query = ""
+    needs_revision = False
+    needs_clarification = False
+    revision_reason = ""
     try:
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0]
@@ -261,6 +277,9 @@ What should we do next?
         thinking = data.get("thinking", content)
         needs_search = data.get("needs_search", False)
         search_query = data.get("search_query", "")
+        needs_revision = data.get("needs_revision", False)
+        needs_clarification = data.get("needs_clarification", False)
+        revision_reason = data.get("revision_reason", "")
     except (json.JSONDecodeError, IndexError):
         thinking = content
 
@@ -277,17 +296,31 @@ What should we do next?
 
     # Add step detail
     steps = list(state.steps)
+    step_detail = thinking + extra_search_text
+    if needs_revision:
+        step_detail += f"\n\n-> Needs revision: {revision_reason}"
+    if needs_clarification:
+        step_detail += "\n\n-> Needs clarification from user"
     steps.append({
         "name": "think",
         "title": "Reasoning",
-        "detail": thinking + extra_search_text,
-        "meta": {"needs_search": needs_search, "search_query": search_query},
+        "detail": step_detail,
+        "meta": {
+            "needs_search": needs_search,
+            "search_query": search_query,
+            "needs_revision": needs_revision,
+            "needs_clarification": needs_clarification,
+            "revision_reason": revision_reason,
+        },
     })
 
     return {
         "thinking": thinking,
         "tool_results": tool_results,
         "steps": steps,
+        "needs_revision": needs_revision,
+        "needs_clarification": needs_clarification,
+        "clarification_question": revision_reason if needs_clarification else "",
     }
 
 
@@ -412,5 +445,9 @@ def route_after_observe(state: AgentState) -> str:
 
 
 def route_after_think(state: AgentState) -> str:
-    """After thinking, go to execute (always)."""
+    """After thinking, decide whether to execute, revise plan, or clarify."""
+    if state.needs_clarification:
+        return "clarify"
+    if state.needs_revision:
+        return "plan"
     return "execute"

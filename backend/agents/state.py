@@ -30,6 +30,7 @@ class AgentState(BaseModel):
 
     # Control flow flags
     needs_clarification: bool = False
+    needs_revision: bool = False
     is_complete: bool = False
 
     # Conversation history (simple list of dicts)
