@@ -1,9 +1,10 @@
 import MessageBubble from './MessageBubble'
+import AgentSteps from './AgentSteps'
 
-export default function ChatInterface({ messages, isLoading, messagesEndRef }) {
+export default function ChatInterface({ messages, isLoading, messagesEndRef, streamingSteps, streamingTokens }) {
   return (
     <div style={styles.container}>
-      {messages.length === 0 ? (
+      {messages.length === 0 && !isLoading ? (
         <WelcomeScreen />
       ) : (
         <div style={styles.messages}>
@@ -11,7 +12,30 @@ export default function ChatInterface({ messages, isLoading, messagesEndRef }) {
             <MessageBubble key={msg.id} message={msg} />
           ))}
 
-          {isLoading && (
+          {/* Show streaming steps in real-time */}
+          {isLoading && streamingSteps.length > 0 && (
+            <div style={styles.streamingSection}>
+              <AgentSteps steps={streamingSteps} />
+            </div>
+          )}
+
+          {/* Show streaming tokens in real-time */}
+          {isLoading && streamingTokens && (
+            <div style={styles.wrapper}>
+              <div style={styles.avatar}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--nvidia-green)">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                </svg>
+              </div>
+              <div style={styles.streamingBubble}>
+                <div style={styles.markdown}>{streamingTokens}</div>
+                <span style={styles.cursor}>|</span>
+              </div>
+            </div>
+          )}
+
+          {/* Show loading indicator when no streaming yet */}
+          {isLoading && streamingSteps.length === 0 && !streamingTokens && (
             <div style={styles.typing}>
               <div style={styles.typingDot} />
               <div style={{ ...styles.typingDot, animationDelay: '0.2s' }} />
@@ -73,6 +97,45 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+  },
+  streamingSection: {
+    paddingLeft: '42px',
+  },
+  wrapper: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    gap: '10px',
+  },
+  avatar: {
+    width: '32px',
+    height: '32px',
+    borderRadius: '8px',
+    background: 'rgba(118, 185, 0, 0.1)',
+    border: '1px solid rgba(118, 185, 0, 0.2)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  streamingBubble: {
+    maxWidth: '70%',
+    padding: '12px 16px',
+    borderRadius: 'var(--radius-md)',
+    borderBottomLeftRadius: '4px',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-color)',
+    fontSize: '14px',
+    color: 'var(--text-primary)',
+    lineHeight: '1.5',
+  },
+  markdown: {
+    display: 'inline',
+  },
+  cursor: {
+    display: 'inline-block',
+    color: 'var(--nvidia-green)',
+    fontWeight: 'bold',
+    animation: 'blink 1s step-end infinite',
   },
   typing: {
     display: 'flex',

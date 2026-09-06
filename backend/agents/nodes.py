@@ -18,20 +18,24 @@ def get_llm():
 
 OBSERVE_PROMPT = """You are an AI assistant's OBSERVATION module.
 
-Your job: Understand what the user is asking and summarize it clearly.
+Your job: Understand what the user is asking and classify it correctly.
 
-Given the user message and conversation history, provide:
-1. A clear summary of what the user wants
-2. What type of task this is (research, coding, analysis, creative, general)
-3. What information you already have vs what might be needed to complete the request
+RULES for "has_enough_info":
+- Set TRUE for: greetings (hi, hello, hey), thank you, simple questions, general conversation, farewells, jokes, opinions, chitchat, or any message where you can give a reasonable response without asking more.
+- Set FALSE ONLY when: the user's request is genuinely ambiguous AND you truly cannot proceed without knowing something critical. Examples of when to ask: "help me with code" (what language?), "find me a restaurant" (what city?).
 
+Do NOT ask clarification for:
+- Greetings like "hi", "hello", "hey", "good morning"
+- Simple responses like "thanks", "ok", "sure", "cool"
+- General questions you can answer
+- Conversational messages
 
-Output a JSON object with this exact structure:
+Output a JSON object:
 {
-    "observation": "clear summary of the user's request",
-    "task_type": "research|coding|analysis|creative|general",
-    "has_enough_info": true/false,
-    "missing_info": ["list of missing pieces if any"]
+    "observation": "clear summary of what the user wants",
+    "task_type": "research|coding|analysis|creative|general|conversational",
+    "has_enough_info": true,
+    "missing_info": []
 }
 """
 
@@ -72,45 +76,48 @@ Output a JSON object with this exact structure:
     "needs_search": true/false,
     "search_query": "query if search needed",
     "needs_revision": false,
-    "revision_reason": "if needs_revision is true, explain why the plan needs revision",
-    "needs_clarification": false
+    "revision_reason": "if needs_revision is true, explain why",
+    "needs_clarification": false,
+    "clarification_question": "if needs_clarification is true, the question to ask the user"
 }
 
-Set "needs_revision" to true if:
-- The plan is missing important steps
-- Search results revealed the approach is wrong
-- A better approach was found
-
-Set "needs_clarification" to true if:
-- You cannot proceed without user input
+Set "needs_clarification" to true ONLY if:
+- You absolutely cannot proceed without user input
 - Critical information is missing that only the user can provide
+- When true, you MUST provide a clear question in "clarification_question"
 """
 
-EXECUTE_PROMPT = """You are an AI assistant's EXECUTION module.
+EXECUTE_PROMPT = """You are a helpful AI assistant.
 
-Your job: Based on all the information gathered (plan, search results, thinking),
-generate a comprehensive, helpful response to the user.
+Generate a response based on the context below.
 
-Be thorough but concise. Use markdown formatting.
+If this is a simple conversational message (greeting, thanks, etc.), respond naturally and warmly - keep it short and friendly. No need for formal structure.
+
+For actual tasks, be thorough but concise. Use markdown formatting.
 If you used search results, cite your sources.
 Address the user's original question directly.
 """
 
-CLARIFY_PROMPT = """You are an AI assistant's CLARIFICATION module.
+CLARIFY_PROMPT = """You are a helpful AI assistant's CLARIFICATION module.
 
-Your job: When the user's request is ambiguous or needs more details,
-generate a clear clarifying question.
+You should ONLY ask a clarifying question when:
+- The user's task is genuinely vague and you CANNOT proceed without more info
+- There are multiple valid interpretations and you don't know which one
 
-You can ask either:
-- A multiple choice question (give 2-4 options)
-- An open-ended question (ask for specific details)
+Do NOT ask for clarification if:
+- The user said hi/hello/thanks or any greeting
+- You can give a reasonable response even if it might not be perfect
+- The request is specific enough to attempt
 
-Output a JSON object with this exact structure:
+If you must ask, keep it natural and conversational - not robotic.
+Ask ONE question at most. Prefer multiple choice (2-3 options) when possible.
+
+Output JSON:
 {
     "question": "your clarifying question",
-    "type": "mcq" or "text",
-    "options": ["option1", "option2"] only if type is mcq,
-    "reason": "why you need this clarification"
+    "type": "mcq",
+    "options": ["option1", "option2"],
+    "reason": "why you need this"
 }
 """
 
@@ -122,6 +129,29 @@ Output a JSON object with this exact structure:
 def observe_node(state: AgentState) -> dict:
     """Observe: Understand what the user is asking."""
     print("\n[OBSERVE] Understanding user request...")
+
+    msg = state.user_message.strip().lower()
+
+    # Quick check: simple greetings and chitchat don't need the full pipeline
+    simple_patterns = [
+        "hi", "hello", "hey", "good morning", "good evening", "good afternoon",
+        "how are you", "what's up", "sup", "yo", "thanks", "thank you", "ok",
+        "sure", "cool", "nice", "great", "awesome", "bye", "goodbye", "see you",
+    ]
+    if msg in simple_patterns or len(msg.split()) <= 2:
+        steps = list(state.steps)
+        steps.append({
+            "name": "observe",
+            "title": "Observation",
+            "detail": f"Simple conversational message: {state.user_message}",
+            "meta": {"task_type": "conversational", "has_enough_info": True},
+        })
+        return {
+            "observation": state.user_message,
+            "needs_clarification": False,
+            "skip_to_execute": True,
+            "steps": steps,
+        }
 
     llm = get_llm()
 
@@ -267,6 +297,7 @@ What should we do next?
     needs_revision = False
     needs_clarification = False
     revision_reason = ""
+    clarification_question = ""
     try:
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0]
@@ -280,6 +311,7 @@ What should we do next?
         needs_revision = data.get("needs_revision", False)
         needs_clarification = data.get("needs_clarification", False)
         revision_reason = data.get("revision_reason", "")
+        clarification_question = data.get("clarification_question", "")
     except (json.JSONDecodeError, IndexError):
         thinking = content
 
@@ -314,13 +346,16 @@ What should we do next?
         },
     })
 
+    # Build clarification question
+    final_clarification = clarification_question or revision_reason or "Could you provide more details about what you need?"
+
     return {
         "thinking": thinking,
         "tool_results": tool_results,
         "steps": steps,
         "needs_revision": needs_revision,
         "needs_clarification": needs_clarification,
-        "clarification_question": revision_reason if needs_clarification else "",
+        "clarification_question": final_clarification,
     }
 
 
@@ -438,9 +473,11 @@ def clarify_node(state: AgentState) -> dict:
 # ─────────────────────────────────────────────
 
 def route_after_observe(state: AgentState) -> str:
-    """Decide whether to plan or clarify after observation."""
+    """Decide whether to plan, clarify, or skip to execute after observation."""
     if state.needs_clarification:
         return "clarify"
+    if state.skip_to_execute:
+        return "execute"
     return "plan"
 
 

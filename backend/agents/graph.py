@@ -36,13 +36,14 @@ def build_graph() -> StateGraph:
     # Set entry point
     graph.set_entry_point("observe")
 
-    # After observe: plan or clarify
+    # After observe: plan, clarify, or skip to execute for simple messages
     graph.add_conditional_edges(
         "observe",
         route_after_observe,
         {
             "plan": "plan",
             "clarify": "clarify",
+            "execute": "execute",
         },
     )
 
